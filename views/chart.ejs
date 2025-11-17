@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ECG + Sensor Real-time Charts</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body {
+            background: #fff9f9;
+            color: #b71c1c;
+            font-family: "Segoe UI", sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h2 {
+            margin-bottom: 15px;
+        }
+
+        #chart-box {
+            width: 95%;
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #ffffff;
+            border: 2px solid #ffcdd2;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 0 10px #ffcdd2aa;
+        }
+
+        canvas {
+            width: 100% !important;
+            height: 300px !important;
+        }
+
+        #bottom {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .small {
+            flex: 1 1 45%;
+            background: #fafafa;
+            border-radius: 10px;
+            padding: 10px;
+            border: 1px solid #ddd;
+        }
+
+        #timer {
+            font-size: 22px;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+
+        #sampling {
+            font-size: 16px;
+            color: #444;
+            margin-top: 4px;
+        }
+
+        button {
+            margin-top: 15px;
+            padding: 10px 25px;
+            background: linear-gradient(90deg, #6d91e7, #15919d);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.25s;
+        }
+
+        button:hover {
+            transform: scale(1.05);
+            background: linear-gradient(90deg, #75cfcf, #15919d);
+        }
+    </style>
+</head>
+
+<body>
+    <h2>📈 ECG + Motion Real-time Monitor</h2>
+
+    <div id="chart-box">
+        <canvas id="ecgChart"></canvas>
+
+        <div id="bottom">
+            <div class="small"><canvas id="accelChart"></canvas></div>
+            <div class="small"><canvas id="gyroChart"></canvas></div>
+        </div>
+
+        <div id="timer">⏱ 00:00</div>
+        <div id="sampling">ECG: ... Hz — MPU: ... Hz</div>
+        <button id="startBtn">▶ Bắt đầu đo</button>
+    </div>
+
+    <script>
+        const socket = io();
+        const ECG_RATE = 250;
+        const IMU_RATE = 50;
+        const WINDOW_SEC = 5;
+        const ECG_SIZE = ECG_RATE * WINDOW_SEC;
+        const IMU_SIZE = IMU_RATE * WINDOW_SEC;
+        const UPDATE_INTERVAL = 500; // 0.5s
+
+        const samplingEl = document.getElementById("sampling");
+
+        // ==== Chart Setup ====
+        const ecgChart = new Chart(document.getElementById("ecgChart"), {
+            type: "line",
+            data: {
+                labels: Array(ECG_SIZE).fill(""),
+                datasets: [{
+                    label: "ECG (mV)",
+                    data: Array(ECG_SIZE).fill(0),
+                    borderColor: "#e53935",
+                    borderWidth: 2,
+                    radius: 0,
+                    tension: 0.25,
+                }]
+            },
+            options: {
+                animation: false,
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { display: false },
+                    y: {
+                        min: -3,
+                        max: 3,
+                        ticks: {
+                            stepSize: 1,
+                            color: "#444",
+                            font: {
+                                size: 13,
+                                family: "Segoe UI, Roboto, Helvetica, sans-serif",
+                                weight: "500",
+                            },
+                            padding: 6, // khoảng cách giữa số và trục
+                            callback: function (value) {
+                                // Hiển thị số nguyên, không dấu thập phân
+                                return value % 1 === 0 ? value.toString() : "";
+                            }
+                        },
+                        grid: {
+                            color: (ctx) => ctx.tick.value === 0 ? "#ff8a80" : "#f5c6c6", // đường 0 đậm
+                            lineWidth: (ctx) => ctx.tick.value === 0 ? 2 : 0.8,
+                            drawBorder: false,
+                        },
+                        border: {
+                            color: "#ffcdd2",
+                            width: 1.2
+                        }
+                    }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        const accelChart = new Chart(document.getElementById("accelChart"), {
+            type: "line",
+            data: {
+                labels: Array(IMU_SIZE).fill(""),
+                datasets: [
+                    { label: "Accel X", data: Array(IMU_SIZE).fill(0), borderColor: "#1976d2", borderWidth: 2, radius: 0, tension: 0.2 },
+                    { label: "Accel Y", data: Array(IMU_SIZE).fill(0), borderColor: "#43a047", borderWidth: 2, radius: 0, tension: 0.2 },
+                    { label: "Accel Z", data: Array(IMU_SIZE).fill(0), borderColor: "#fbc02d", borderWidth: 2, radius: 0, tension: 0.2 }
+                ]
+            },
+            options: {
+                animation: false,
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { display: false },
+                    y: { min: -5, max: 5, ticks: { color: "#555" }, grid: { color: "#e3f2fd" } }
+                },
+                plugins: { legend: { display: true, labels: { color: "#333" } } }
+            }
+        });
+
+        const gyroChart = new Chart(document.getElementById("gyroChart"), {
+            type: "line",
+            data: {
+                labels: Array(IMU_SIZE).fill(""),
+                datasets: [
+                    { label: "Gyro X", data: Array(IMU_SIZE).fill(0), borderColor: "#8e24aa", borderWidth: 2, radius: 0, tension: 0.2 },
+                    { label: "Gyro Y", data: Array(IMU_SIZE).fill(0), borderColor: "#fb8c00", borderWidth: 2, radius: 0, tension: 0.2 },
+                    { label: "Gyro Z", data: Array(IMU_SIZE).fill(0), borderColor: "#0288d1", borderWidth: 2, radius: 0, tension: 0.2 }
+                ]
+            },
+            options: {
+                animation: false,
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { display: false },
+                    y: { min: -5, max: 5, ticks: { color: "#555" }, grid: { color: "#f3e5f5" } }
+                },
+                plugins: { legend: { display: true, labels: { color: "#333" } } }
+            }
+        });
+
+        // === Timer + Measurement ===
+        let measuring = false;
+        let elapsed = 0;
+        let timerInterval = null;
+        const timerEl = document.getElementById("timer");
+        const startBtn = document.getElementById("startBtn");
+        let samplingSet = false;
+
+        function startTimer() {
+            timerInterval = setInterval(() => {
+                elapsed++;
+                const mins = String(Math.floor(elapsed / 60)).padStart(2, "0");
+                const secs = String(elapsed % 60).padStart(2, "0");
+                timerEl.textContent = `⏱ ${mins}:${secs}`;
+            }, 1000);
+        }
+
+        function stopTimer() {
+            clearInterval(timerInterval);
+            timerInterval = null;
+        }
+
+        // ==== Bộ đệm dữ liệu ====
+        let ecgBuffer = [];
+        let accelBuffer = { x: [], y: [], z: [] };
+        let gyroBuffer = { x: [], y: [], z: [] };
+
+        // === Nhận dữ liệu từ server ===
+        socket.on("new-ecg", (payload) => {
+            const { ecg_signal, accel, gyro, sampling_rate } = payload;
+
+            if (sampling_rate && !samplingSet) {
+                samplingEl.textContent = `ECG: ${sampling_rate.ecg_hz ?? '?'} Hz — MPU: ${sampling_rate.mpu_hz ?? '?'} Hz`;
+                samplingSet = true;
+            }
+
+            if (Array.isArray(ecg_signal)) ecgBuffer.push(...ecg_signal);
+            if (accel?.x) {
+                accelBuffer.x.push(...accel.x);
+                accelBuffer.y.push(...accel.y);
+                accelBuffer.z.push(...accel.z);
+            }
+            if (gyro?.x) {
+                gyroBuffer.x.push(...gyro.x);
+                gyroBuffer.y.push(...gyro.y);
+                gyroBuffer.z.push(...gyro.z);
+            }
+
+            if (measuring) {
+                fetch("/api/save-reading", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                }).catch(err => console.error("❌ save error:", err));
+            }
+        });
+
+        // === Cập nhật chart mỗi 0.5s ===
+        setInterval(() => {
+            if (ecgBuffer.length > 0) {
+                const ecgData = ecgChart.data.datasets[0].data;
+                ecgData.push(...ecgBuffer.splice(0, ECG_RATE / 2)); // ~125 điểm/0.5s
+                if (ecgData.length > ECG_SIZE) ecgData.splice(0, ecgData.length - ECG_SIZE);
+                ecgChart.update("none");
+            }
+
+            ["accelChart", "gyroChart"].forEach((chartName, i) => {
+                const chart = chartName === "accelChart" ? accelChart : gyroChart;
+                const buffer = chartName === "accelChart" ? accelBuffer : gyroBuffer;
+                if (buffer.x.length > 0) {
+                    const N = IMU_RATE / 2; // 25 điểm/0.5s
+                    chart.data.datasets[0].data.push(...buffer.x.splice(0, N));
+                    chart.data.datasets[1].data.push(...buffer.y.splice(0, N));
+                    chart.data.datasets[2].data.push(...buffer.z.splice(0, N));
+                    chart.data.datasets.forEach(ds => {
+                        if (ds.data.length > IMU_SIZE)
+                            ds.data.splice(0, ds.data.length - IMU_SIZE);
+                    });
+                    chart.update("none");
+                }
+            });
+        }, UPDATE_INTERVAL);
+
+        startBtn.addEventListener("click", () => {
+            measuring = !measuring;
+            if (measuring) {
+                elapsed = 0;
+                startTimer();
+                startBtn.textContent = "⏸ Dừng đo";
+                socket.emit("start-measure");
+            } else {
+                stopTimer();
+                startBtn.textContent = "▶ Bắt đầu đo";
+                socket.emit("stop-measure");
+            }
+        });
+    </script>
+
+</body>
+
+</html>
