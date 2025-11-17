@@ -28,17 +28,6 @@ app.use((err, req, res, next) => {
 
 app.set("io", io);
 
-await pool.query(`SET time_zone = '+07:00';`)
-await pool.query(`
-  CREATE TABLE IF NOT EXISTS Readings (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    ecg TEXT NOT NULL,
-    conquay TEXT NOT NULL,
-    giatoc TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  );
-`);
-
 app.use('/api', route)
 
 app.get('/', (req, res) => {
