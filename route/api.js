@@ -149,7 +149,7 @@ function stringifyFlatArrays(obj) {
 
     return json;
 }
-
+let id = 0;
 router.post("/save-reading", (req, res) => {
     const { ecg_signal, accel, gyro } = req.body;
 
@@ -164,7 +164,7 @@ router.post("/save-reading", (req, res) => {
         let list = JSON.parse(raw);
 
         // 3) Tạo bản ghi mới
-        const id = Date.now();
+        id++;
 
         const reading = {
             id,

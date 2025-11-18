@@ -230,7 +230,7 @@
 
 // ---------- CẤU HÌNH ----------
 const char *ssid = "Vankkk";
-const char *password = "vanhhh";
+const char *password = "vanhhhhh";
 const char *serverUrl = "http://172.20.10.2:3000/api/telemetry";
 
 #define ECG_PIN 34
